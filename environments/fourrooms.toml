@@ -1,0 +1,29 @@
+name = "four-rooms"
+step_limit = 100
+seed = 1
+
+layout = """
+#############
+#.....#.....#
+#...........#
+#..(T,L)..#..T..#
+#.....#.....#
+#.....#.....#
+##.#######.##
+#.....#.....#
+#.....#.....#
+#..L..#.....#
+#...........#
+#.....#.....#
+#############
+"""
+
+[[labels]]
+identifier = "L"
+constraint = true
+random = false
+
+[[labels]]
+identifier = "T"
+constraint = true
+random = false
