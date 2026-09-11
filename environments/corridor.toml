@@ -1,21 +1,29 @@
 name = "corridor"
 step_limit = 50
-props = ["A", "B", "C"]
-cons = ["A", "C"]
+seed = 7
 
+# (S, A, B) is one cell: initial state carrying labels A and B.
+# C has no fixed cells; four are placed at random from the seed.
 layout = """
 ############
-#S.A...*..X#
+#S.A...(S,A,B)..X#
 #S....#....#
-#S.C..#..B.#
+#S....#..B.#
 ############
 """
 
-[symbols]
-"#" = { barrier = true }
-"X" = { absorbing = true }
-"S" = { initial = 1.0 }
-"A" = { labels = ["A"] }
-"B" = { labels = ["B"] }
-"C" = { labels = ["C"] }
-"*" = { labels = ["A", "B"] }
+[[labels]]
+identifier = "A"
+constraint = true
+random = false
+
+[[labels]]
+identifier = "B"
+constraint = false
+random = false
+
+[[labels]]
+identifier = "C"
+constraint = true
+random = true
+num_states = 4

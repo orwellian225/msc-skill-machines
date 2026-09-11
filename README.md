@@ -43,23 +43,31 @@ uv run msc-visualise environments/corridor.toml --screenshot out.png \
 
 ```toml
 name = "office"
-props = ["A", "B"]      # proposition labels, in order
-cons  = ["B"]           # subset of props that are also constraints (-> con_B primitive)
+seed = 1                # seeds random label placement and the env reset
 step_limit = 100        # optional
 
 layout = """
 #######
-#A...B#
-#..X..#
+#A....#
+#.(S,X,A).#     # a bracket group puts several symbols in one cell
+#S...B#
 #######
 """
 
-[symbols]               # "." is always a free cell
-"#" = { barrier = true }
-"X" = { absorbing = true }
-"S" = { initial = 1.0 }      # initial-state weight; omit everywhere for uniform over free cells
-"A" = { labels = ["A"] }
-"*" = { labels = ["A", "B"] } # a cell may carry several labels
+[[labels]]
+identifier = "A"
+constraint = true       # also creates a con_A label and primitive
+random = true           # add num_states A cells on random non-barrier cells
+num_states = 4
+
+[[labels]]
+identifier = "B"
+constraint = false
+random = false          # only where the map says
 ```
+
+Reserved symbols: `#` barrier, `X` absorbing, `S` initial state (uniform over all `S` cells,
+or over all free cells if there is none), `.` free. Every other symbol is a label identifier.
+Random labels are sampled independently, so they may overlap each other or fixed cells.
 
 Full details are in the docstring of `src/msc_skill_machines/gridworld_builder.py`.

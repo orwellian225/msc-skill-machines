@@ -1,8 +1,6 @@
 name = "office"
 step_limit = 100
 seed = 1
-props = ["A", "B"]
-cons = ["B"]
 
 layout = """
 #######
@@ -14,8 +12,12 @@ layout = """
 #######
 """
 
-[symbols]
-"#" = { barrier = true }
-"X" = { absorbing = true }
-"A" = { labels = ["A"] }
-"B" = { labels = ["B"] }
+[[labels]]
+identifier = "A"
+constraint = false
+random = false
+
+[[labels]]
+identifier = "B"
+constraint = true
+random = false
