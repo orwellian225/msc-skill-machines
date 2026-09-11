@@ -33,6 +33,7 @@ ROW_H = 26
 STACK_GAP = 12
 STACK_TITLE_H = 14
 MAX_STACK_W = 1400
+WINDOW_INSET = 40   # minimum gap between the window and the monitor edges
 
 MASK_OPACITY = 0.7
 INITIAL_RANGE = (rl.WHITE, rl.BLUE)
@@ -109,9 +110,11 @@ class Scene:
         """Unshrunk width of the reward map (n_actions columns of full-size grids)."""
         return primitive_reward_map_geometry(self.stack_origin(), self.n_actions, STACK_GAP).width
 
-    def stack_height(self, content_width: int) -> int:
-        """Height of the reward map (2 rows) once shrunk to fit ``content_width``, plus its heading."""
-        return STACK_TITLE_H + primitive_reward_map_geometry(self.stack_origin(), self.n_actions, STACK_GAP, content_width).height
+    def stack_height(self, content_width: int, content_height: int | None = None) -> int:
+        """Height of the reward map (2 rows) once shrunk to fit the content box, plus its heading."""
+        max_h = None if content_height is None else content_height - STACK_TITLE_H
+        geom = primitive_reward_map_geometry(self.stack_origin(), self.n_actions, STACK_GAP, content_width, max_h)
+        return STACK_TITLE_H + geom.height
 
 
 def load_scene(toml_path: str, cell_size: int) -> Scene:
@@ -123,10 +126,13 @@ def load_scene(toml_path: str, cell_size: int) -> Scene:
     return Scene(spec, env, primitives, reward_maps, grid, cell_size)
 
 
-def draw_scene(scene: Scene, toggles: Toggles, content_width: int, draw_hover: bool = True) -> None:
+def draw_scene(
+    scene: Scene, toggles: Toggles, content_width: int, content_height: int | None = None, draw_hover: bool = True,
+) -> None:
     """Draw the grid, its enabled overlays and (if selected) the reward-map stack.
 
-    ``content_width`` is the horizontal space available for the reward stack; layers shrink to fit.
+    ``content_width`` / ``content_height`` bound the space below the grid for the reward map;
+    its grids shrink to fit.
     """
     env, grid = scene.env, scene.grid
     draw_grid(grid)
@@ -160,8 +166,9 @@ def draw_scene(scene: Scene, toggles: Toggles, content_width: int, draw_hover: b
     if prim is not None and toggles.reward_map:
         stack = scene.stack_origin()
         rl.draw_text(f"reward map: {prim.target_label}", MARGIN, stack.origin_y - STACK_TITLE_H, 12, rl.DARKGRAY)
+        max_h = None if content_height is None else content_height - STACK_TITLE_H
         draw_primitive_reward_map(
-            stack, prim, REWARD_RANGE, gap_px=STACK_GAP, max_width=content_width,
+            stack, prim, REWARD_RANGE, gap_px=STACK_GAP, max_width=content_width, max_height=max_h,
             reward_map=scene.reward_maps[prim.target_label],
         )
 
@@ -234,10 +241,22 @@ def run_window(scene: Scene, toggles: Toggles) -> None:
     rl.init_window(win_w, win_h, f"gridworld: {scene.spec.name}")
     rl.set_target_fps(60)
     try:
+        # Keep the window on screen: a window taller/wider than the monitor is placed with its
+        # title bar off-screen on Windows and looks like it never opened.
+        monitor = rl.get_current_monitor()
+        max_w, max_h = rl.get_monitor_width(monitor) - 2 * WINDOW_INSET, rl.get_monitor_height(monitor) - 2 * WINDOW_INSET
+        if win_w > max_w or win_h > max_h:
+            rl.set_window_size(min(win_w, max_w), min(win_h, max_h))
+            rl.set_window_position(WINDOW_INSET, WINDOW_INSET)
+
         while not rl.window_should_close():
             rl.begin_drawing()
             rl.clear_background(rl.RAYWHITE)
-            draw_scene(scene, toggles, content_width=rl.get_screen_width() - PANEL_W - 3 * MARGIN)
+            draw_scene(
+                scene, toggles,
+                content_width=rl.get_screen_width() - PANEL_W - 3 * MARGIN,
+                content_height=rl.get_screen_height() - scene.grid.height - 3 * MARGIN,
+            )
             draw_panel(scene, toggles)
             rl.end_drawing()
     finally:

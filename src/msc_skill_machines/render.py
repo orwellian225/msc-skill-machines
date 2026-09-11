@@ -213,13 +213,23 @@ class PrimitiveMapGeometry:
 
 
 def primitive_reward_map_geometry(
-    layout: GridLayout, n_actions: int, gap_px: int = 12, max_width: int | None = None,
+    layout: GridLayout,
+    n_actions: int,
+    gap_px: int = 12,
+    max_width: int | None = None,
+    max_height: int | None = None,
 ) -> PrimitiveMapGeometry:
-    """Size of a primitive reward map drawn from ``layout``; cells shrink to fit ``max_width``."""
+    """Size of a primitive reward map drawn from ``layout``.
+
+    Cells shrink so the whole map fits within ``max_width`` and ``max_height`` when given.
+    """
     cell_px = layout.cell_px
+    n_rows = len(PRIMITIVE_ROW_TITLES)
     if max_width is not None and n_actions > 0:
-        cell_px = max(4, min(cell_px, (max_width - gap_px * (n_actions - 1)) // (n_actions * layout.cols)))
-    return PrimitiveMapGeometry(cell_px, n_actions, layout.rows, layout.cols, gap_px)
+        cell_px = min(cell_px, (max_width - gap_px * (n_actions - 1)) // (n_actions * layout.cols))
+    if max_height is not None:
+        cell_px = min(cell_px, (max_height - n_rows * PRIMITIVE_TITLE_H - gap_px * (n_rows - 1)) // (n_rows * layout.rows))
+    return PrimitiveMapGeometry(max(4, cell_px), n_actions, layout.rows, layout.cols, gap_px)
 
 
 def draw_primitive_reward_map(
@@ -228,6 +238,7 @@ def draw_primitive_reward_map(
     colour_range: ColourRange = (rl.WHITE, rl.ORANGE),
     gap_px: int = 12,
     max_width: int | None = None,
+    max_height: int | None = None,
     reward_map: npt.NDArray[np.floating] | None = None,
     title_colour: Colour = rl.DARKGRAY,
 ) -> list[list[GridLayout]]:
@@ -252,7 +263,7 @@ def draw_primitive_reward_map(
             f"reward map has shape {values.shape}, expected ({layout.rows}, {layout.cols}, {2 * n_actions})"
         )
     titles = primitive.action_labels()
-    geom = primitive_reward_map_geometry(layout, n_actions, gap_px, max_width)
+    geom = primitive_reward_map_geometry(layout, n_actions, gap_px, max_width, max_height)
 
     layouts: list[list[GridLayout]] = []
     for t, _row_name in enumerate(PRIMITIVE_ROW_TITLES):
