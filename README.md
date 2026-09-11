@@ -25,6 +25,20 @@ shown at once:
 
 Hovering a cell prints its coordinates, initial probability and labels under the grid.
 
+### Screenshots instead of a window
+
+Pass `--screenshot PATH` to render a single frame to a PNG (hidden window, no side panel) and
+exit. The renderer options choose what is drawn; in window mode they set the initial toggles:
+
+```
+uv run msc-visualise environments/corridor.toml --screenshot out.png \
+    --show all --primitive A --reward-map --target-goals
+```
+
+- `--show OVERLAY...` any of `barrier absorbing initial goal labels`, or `all`
+  (default: `barrier absorbing labels`)
+- `--primitive LABEL` selects a primitive; `--reward-map` and `--target-goals` draw its views
+
 ### TOML schema
 
 ```toml

@@ -3,12 +3,15 @@
 Usage::
 
     python -m msc_skill_machines.visualiser environments/office.toml [--cell-size 48]
+    python -m msc_skill_machines.visualiser environments/office.toml --screenshot out.png \
+        --show all --primitive A --reward-map --target-goals
 """
 
 from __future__ import annotations
 
 import argparse
 from dataclasses import dataclass, field
+from pathlib import Path
 
 import pyray as rl
 
@@ -28,10 +31,15 @@ MARGIN = 20
 ROW_H = 26
 STACK_GAP = 12
 STACK_MIN_H = 140
+STACK_TITLE_H = 14
+MAX_STACK_W = 1400
 
 MASK_OPACITY = 0.7
 INITIAL_RANGE = (rl.WHITE, rl.BLUE)
 REWARD_RANGE = (rl.WHITE, rl.ORANGE)
+
+OVERLAYS = ("barrier", "absorbing", "initial", "goal", "labels")
+DEFAULT_OVERLAYS = ("barrier", "absorbing", "labels")
 
 
 @dataclass
@@ -72,116 +80,221 @@ class Checklist:
         self.cursor += px
 
 
-def main(argv: list[str] | None = None) -> None:
-    parser = argparse.ArgumentParser(description="Visualise a TOML gridworld and its primitives")
-    parser.add_argument("toml_path", help="path to the gridworld .toml file")
-    parser.add_argument("--cell-size", type=int, default=48, help="pixel size of one grid cell")
-    parser.add_argument("--frames", type=int, default=0, help="render this many frames then exit (0 = run until closed)")
-    parser.add_argument("--screenshot", default=None, help="save a screenshot to this path before exiting (with --frames)")
-    parser.add_argument("--all-on", action="store_true", help="start with every overlay enabled and the first primitive selected")
-    args = parser.parse_args(argv)
+@dataclass
+class Scene:
+    """Everything needed to draw one frame; shared by the window loop and screenshot mode."""
+    spec: object
+    env: object
+    primitives: dict
+    reward_maps: dict
+    action_titles: list[str]
+    grid: GridLayout
+    cell_size: int
 
-    spec, env = load_gridworld(args.toml_path)
+    @property
+    def rows(self) -> int:
+        return self.grid.rows
+
+    @property
+    def cols(self) -> int:
+        return self.grid.cols
+
+    def stack_width(self) -> int:
+        n = len(self.action_titles)
+        return n * self.cols * self.cell_size + (n - 1) * STACK_GAP if n else 0
+
+    def stack_cell_px(self, content_width: int) -> int:
+        """Cell size the reward stack will use after shrinking to fit ``content_width``."""
+        n = len(self.action_titles)
+        if n == 0:
+            return self.cell_size
+        return max(4, min(self.cell_size, (content_width - STACK_GAP * (n - 1)) // (n * self.cols)))
+
+    def stack_origin(self) -> GridLayout:
+        return GridLayout(MARGIN, self.grid.origin_y + self.grid.height + MARGIN, self.cell_size, self.rows, self.cols)
+
+
+def load_scene(toml_path: str, cell_size: int) -> Scene:
+    spec, env = load_gridworld(toml_path)
     primitives = build_primitives(env, seed=spec.seed)
     reward_maps = {name: prim.reward_map() for name, prim in primitives.items()}
     action_titles = next(iter(primitives.values())).action_labels() if primitives else []
-
     rows, cols = env.barrier_mask.shape
-    grid = GridLayout(MARGIN, MARGIN, args.cell_size, rows, cols)
-    n_layers = len(action_titles)
-    stack_w = n_layers * cols * args.cell_size + (n_layers - 1) * STACK_GAP if n_layers else 0
-    win_w = max(grid.width + PANEL_W + 3 * MARGIN, min(stack_w, 1400) + PANEL_W + 3 * MARGIN)
-    win_h = grid.height + 3 * MARGIN + STACK_MIN_H
-    win_h = max(win_h, MARGIN * 2 + ROW_H * (10 + len(primitives)))
+    grid = GridLayout(MARGIN, MARGIN, cell_size, rows, cols)
+    return Scene(spec, env, primitives, reward_maps, action_titles, grid, cell_size)
 
-    toggles = Toggles()
-    if args.all_on:
-        toggles = Toggles(
-            barrier=True, absorbing=True, initial=True, goal=True, labels=True,
-            primitive=next(iter(primitives), None), reward_map=True, target_goals=True,
+
+def draw_scene(scene: Scene, toggles: Toggles, content_width: int, draw_hover: bool = True) -> None:
+    """Draw the grid, its enabled overlays and (if selected) the reward-map stack.
+
+    ``content_width`` is the horizontal space available for the reward stack; layers shrink to fit.
+    """
+    env, grid = scene.env, scene.grid
+    draw_grid(grid)
+    if toggles.initial:
+        draw_heatmap(grid, env.initial_state_distribution, INITIAL_RANGE, vmin=0.0)
+    if toggles.barrier:
+        draw_mask(grid, env.barrier_mask, rl.BLACK, MASK_OPACITY)
+    if toggles.absorbing:
+        draw_mask(grid, env.absorbing_mask, rl.RED, MASK_OPACITY)
+    if toggles.goal:
+        draw_mask(grid, env.goal_mask, rl.GREEN, MASK_OPACITY)
+    prim = scene.primitives.get(toggles.primitive) if toggles.primitive else None
+    if prim is not None and toggles.target_goals:
+        draw_mask(grid, prim.target_goal_mask(), rl.GREEN, MASK_OPACITY)
+    draw_grid_lines(grid)
+    if toggles.labels:
+        # only proposition symbols; con_X columns duplicate X and would just add noise
+        draw_labels(grid, env.label_mask[:, :, :len(env.prop_labels)], env.prop_labels)
+
+    if draw_hover:
+        mouse = rl.get_mouse_position()
+        cell = grid.cell_at(int(mouse.x), int(mouse.y))
+        if cell is not None:
+            r, c = cell
+            labels = ",".join(sorted(env.label_assignment_to_set(env.label_mask[r, c]))) or "-"
+            rl.draw_text(
+                f"({r},{c}) p0={env.initial_state_distribution[r, c]:.3f} labels={labels}",
+                MARGIN, grid.origin_y + grid.height + 4, 10, rl.DARKGRAY,
+            )
+
+    if prim is not None and toggles.reward_map:
+        stack = scene.stack_origin()
+        rl.draw_text(f"reward map: {prim.target_label}", MARGIN, stack.origin_y - STACK_TITLE_H, 12, rl.DARKGRAY)
+        draw_heatmap_stack(
+            stack, scene.reward_maps[prim.target_label], REWARD_RANGE,
+            gap_px=STACK_GAP, titles=scene.action_titles, max_width=content_width, vmin=0.0, vmax=1.0,
         )
 
-    rl.set_config_flags(rl.ConfigFlags.FLAG_WINDOW_RESIZABLE)
-    rl.init_window(win_w, win_h, f"gridworld: {spec.name}")
-    rl.set_target_fps(60)
 
-    frame = 0
+def draw_panel(scene: Scene, toggles: Toggles) -> None:
+    """Right-hand raygui checklist; mutates ``toggles`` in place."""
+    panel_x = rl.get_screen_width() - PANEL_W - MARGIN
+    rl.draw_rectangle(panel_x - 10, 0, PANEL_W + 10 + MARGIN, rl.get_screen_height(), rl.Color(240, 240, 240, 255))
+    ui = Checklist(panel_x, MARGIN)
+    ui.heading(f"{scene.spec.name}  ({scene.rows}x{scene.cols})")
+    ui.heading("environment")
+    toggles.barrier = ui.checkbox("barrier_mask (black)", toggles.barrier)
+    toggles.absorbing = ui.checkbox("absorbing_mask (red)", toggles.absorbing)
+    toggles.initial = ui.checkbox("initial_state_distribution", toggles.initial)
+    toggles.goal = ui.checkbox("goal_mask (green)", toggles.goal)
+    toggles.labels = ui.checkbox("label_mask (symbols)", toggles.labels)
+
+    ui.gap()
+    ui.heading("primitive (select one)")
+    for name in scene.primitives:
+        selected = ui.checkbox(name, toggles.primitive == name)
+        if selected and toggles.primitive != name:
+            toggles.primitive = name
+        elif not selected and toggles.primitive == name:
+            toggles.primitive = None
+    ui.gap()
+    toggles.reward_map = ui.checkbox("reward map", toggles.reward_map)
+    toggles.target_goals = ui.checkbox("target goals (green)", toggles.target_goals)
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description="Visualise a TOML gridworld and its primitives")
+    parser.add_argument("toml_path", help="path to the gridworld .toml file")
+    parser.add_argument("--cell-size", type=int, default=48, help="pixel size of one grid cell")
+    parser.add_argument(
+        "--screenshot", metavar="PATH", default=None,
+        help="render one frame to this PNG with a hidden window and exit, instead of opening the window",
+    )
+    render = parser.add_argument_group("renderer options", "which overlays are drawn (initial state in window mode)")
+    render.add_argument(
+        "--show", nargs="+", choices=(*OVERLAYS, "all"), default=list(DEFAULT_OVERLAYS), metavar="OVERLAY",
+        help=f"overlays to enable: {', '.join(OVERLAYS)} or all (default: {' '.join(DEFAULT_OVERLAYS)})",
+    )
+    render.add_argument("--primitive", metavar="LABEL", default=None, help="select this primitive (a prop or con_* label)")
+    render.add_argument("--reward-map", action="store_true", help="show the selected primitive's reward map")
+    render.add_argument("--target-goals", action="store_true", help="show the selected primitive's target goals")
+    return parser
+
+
+def toggles_from_args(args: argparse.Namespace, scene: Scene, parser: argparse.ArgumentParser) -> Toggles:
+    show = set(OVERLAYS) if "all" in args.show else set(args.show)
+    if args.primitive is not None and args.primitive not in scene.primitives:
+        parser.error(f"--primitive {args.primitive!r} is not one of {list(scene.primitives)}")
+    if (args.reward_map or args.target_goals) and args.primitive is None:
+        parser.error("--reward-map / --target-goals require --primitive")
+    return Toggles(
+        barrier="barrier" in show, absorbing="absorbing" in show, initial="initial" in show,
+        goal="goal" in show, labels="labels" in show,
+        primitive=args.primitive, reward_map=args.reward_map, target_goals=args.target_goals,
+    )
+
+
+def run_window(scene: Scene, toggles: Toggles) -> None:
+    win_w = max(scene.grid.width, min(scene.stack_width(), MAX_STACK_W)) + PANEL_W + 3 * MARGIN
+    win_h = scene.grid.height + 3 * MARGIN + STACK_MIN_H
+    win_h = max(win_h, MARGIN * 2 + ROW_H * (10 + len(scene.primitives)))
+
+    rl.set_config_flags(rl.ConfigFlags.FLAG_WINDOW_RESIZABLE)
+    rl.init_window(win_w, win_h, f"gridworld: {scene.spec.name}")
+    rl.set_target_fps(60)
     try:
         while not rl.window_should_close():
-            if args.frames and frame >= args.frames:
-                if args.screenshot:
-                    rl.take_screenshot(args.screenshot)
-                break
-            frame += 1
             rl.begin_drawing()
             rl.clear_background(rl.RAYWHITE)
-
-            # ---- main grid + composable overlays -------------------------------
-            draw_grid(grid)
-            if toggles.initial:
-                draw_heatmap(grid, env.initial_state_distribution, INITIAL_RANGE, vmin=0.0)
-            if toggles.barrier:
-                draw_mask(grid, env.barrier_mask, rl.BLACK, MASK_OPACITY)
-            if toggles.absorbing:
-                draw_mask(grid, env.absorbing_mask, rl.RED, MASK_OPACITY)
-            if toggles.goal:
-                draw_mask(grid, env.goal_mask, rl.GREEN, MASK_OPACITY)
-            prim = primitives.get(toggles.primitive) if toggles.primitive else None
-            if prim is not None and toggles.target_goals:
-                draw_mask(grid, prim.target_goal_mask(), rl.GREEN, MASK_OPACITY)
-            draw_grid_lines(grid)
-            if toggles.labels:
-                # only proposition symbols; con_X columns duplicate X and would just add noise
-                draw_labels(grid, env.label_mask[:, :, :len(env.prop_labels)], env.prop_labels)
-
-            # hover readout
-            mouse = rl.get_mouse_position()
-            cell = grid.cell_at(int(mouse.x), int(mouse.y))
-            if cell is not None:
-                r, c = cell
-                labels = ",".join(sorted(env.label_assignment_to_set(env.label_mask[r, c]))) or "-"
-                rl.draw_text(
-                    f"({r},{c}) p0={env.initial_state_distribution[r, c]:.3f} labels={labels}",
-                    MARGIN, grid.origin_y + grid.height + 4, 10, rl.DARKGRAY,
-                )
-
-            # ---- reward-map stack below the main grid ----------------------------
-            if prim is not None and toggles.reward_map:
-                stack_origin = GridLayout(MARGIN, grid.origin_y + grid.height + MARGIN, args.cell_size, rows, cols)
-                avail_w = rl.get_screen_width() - PANEL_W - 3 * MARGIN
-                rl.draw_text(f"reward map: {prim.target_label}", MARGIN, stack_origin.origin_y - 14, 12, rl.DARKGRAY)
-                draw_heatmap_stack(
-                    stack_origin, reward_maps[prim.target_label], REWARD_RANGE,
-                    gap_px=STACK_GAP, titles=action_titles, max_width=avail_w, vmin=0.0, vmax=1.0,
-                )
-
-            # ---- side panel ---------------------------------------------------------
-            panel_x = rl.get_screen_width() - PANEL_W - MARGIN
-            rl.draw_rectangle(panel_x - 10, 0, PANEL_W + 10 + MARGIN, rl.get_screen_height(), rl.Color(240, 240, 240, 255))
-            ui = Checklist(panel_x, MARGIN)
-            ui.heading(f"{spec.name}  ({rows}x{cols})")
-            ui.heading("environment")
-            toggles.barrier = ui.checkbox("barrier_mask (black)", toggles.barrier)
-            toggles.absorbing = ui.checkbox("absorbing_mask (red)", toggles.absorbing)
-            toggles.initial = ui.checkbox("initial_state_distribution", toggles.initial)
-            toggles.goal = ui.checkbox("goal_mask (green)", toggles.goal)
-            toggles.labels = ui.checkbox("label_mask (symbols)", toggles.labels)
-
-            ui.gap()
-            ui.heading("primitive (select one)")
-            for name in primitives:
-                selected = ui.checkbox(name, toggles.primitive == name)
-                if selected and toggles.primitive != name:
-                    toggles.primitive = name
-                elif not selected and toggles.primitive == name:
-                    toggles.primitive = None
-            ui.gap()
-            toggles.reward_map = ui.checkbox("reward map", toggles.reward_map)
-            toggles.target_goals = ui.checkbox("target goals (green)", toggles.target_goals)
-
+            draw_scene(scene, toggles, content_width=rl.get_screen_width() - PANEL_W - 3 * MARGIN)
+            draw_panel(scene, toggles)
             rl.end_drawing()
     finally:
         rl.close_window()
+
+
+def save_screenshot(scene: Scene, toggles: Toggles, path: Path) -> Path:
+    """Render one frame in a hidden window sized to the content and write it to ``path``."""
+    path = path.resolve()
+    path.parent.mkdir(parents=True, exist_ok=True)
+
+    show_stack = bool(toggles.primitive and toggles.reward_map)
+    content_w = max(scene.grid.width, min(scene.stack_width(), MAX_STACK_W) if show_stack else 0)
+    win_w = content_w + 2 * MARGIN
+    win_h = scene.grid.height + 2 * MARGIN
+    if show_stack:
+        win_h += MARGIN + STACK_TITLE_H + scene.stack_cell_px(content_w) * scene.rows + MARGIN
+
+    rl.set_config_flags(rl.ConfigFlags.FLAG_WINDOW_HIDDEN)
+    rl.init_window(win_w, win_h, f"gridworld: {scene.spec.name}")
+    try:
+        # A hidden window's framebuffer reads back black, so draw into an offscreen render
+        # texture instead. (take_screenshot() also prepends the cwd to its path, so we export
+        # the image ourselves.)
+        target = rl.load_render_texture(win_w, win_h)
+        try:
+            rl.begin_texture_mode(target)
+            rl.clear_background(rl.RAYWHITE)
+            draw_scene(scene, toggles, content_width=content_w, draw_hover=False)
+            rl.end_texture_mode()
+            image = rl.load_image_from_texture(target.texture)
+            try:
+                rl.image_flip_vertical(image)  # render textures are stored bottom-up
+                rl.export_image(image, str(path))
+            finally:
+                rl.unload_image(image)
+        finally:
+            rl.unload_render_texture(target)
+    finally:
+        rl.close_window()
+
+    if not path.exists():
+        raise RuntimeError(f"raylib did not write {path}")
+    return path
+
+
+def main(argv: list[str] | None = None) -> None:
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    scene = load_scene(args.toml_path, args.cell_size)
+    toggles = toggles_from_args(args, scene, parser)
+
+    if args.screenshot:
+        out = save_screenshot(scene, toggles, Path(args.screenshot))
+        print(f"wrote {out}")
+    else:
+        run_window(scene, toggles)
 
 
 if __name__ == "__main__":
