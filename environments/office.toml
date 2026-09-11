@@ -1,0 +1,21 @@
+name = "office"
+step_limit = 100
+seed = 1
+props = ["A", "B"]
+cons = ["B"]
+
+layout = """
+#######
+#A....#
+#.....#
+#..X..#
+#.....#
+#....B#
+#######
+"""
+
+[symbols]
+"#" = { barrier = true }
+"X" = { absorbing = true }
+"A" = { labels = ["A"] }
+"B" = { labels = ["B"] }

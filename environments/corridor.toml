@@ -1,0 +1,21 @@
+name = "corridor"
+step_limit = 50
+props = ["A", "B", "C"]
+cons = ["A", "C"]
+
+layout = """
+############
+#S.A...*..X#
+#S....#....#
+#S.C..#..B.#
+############
+"""
+
+[symbols]
+"#" = { barrier = true }
+"X" = { absorbing = true }
+"S" = { initial = 1.0 }
+"A" = { labels = ["A"] }
+"B" = { labels = ["B"] }
+"C" = { labels = ["C"] }
+"*" = { labels = ["A", "B"] }
