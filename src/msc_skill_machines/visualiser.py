@@ -21,16 +21,16 @@ from msc_skill_machines.render import (
     draw_grid,
     draw_grid_lines,
     draw_heatmap,
-    draw_heatmap_stack,
     draw_labels,
     draw_mask,
+    draw_primitive_reward_map,
+    primitive_reward_map_geometry,
 )
 
 PANEL_W = 260
 MARGIN = 20
 ROW_H = 26
 STACK_GAP = 12
-STACK_MIN_H = 140
 STACK_TITLE_H = 14
 MAX_STACK_W = 1400
 
@@ -87,7 +87,6 @@ class Scene:
     env: object
     primitives: dict
     reward_maps: dict
-    action_titles: list[str]
     grid: GridLayout
     cell_size: int
 
@@ -99,29 +98,29 @@ class Scene:
     def cols(self) -> int:
         return self.grid.cols
 
-    def stack_width(self) -> int:
-        n = len(self.action_titles)
-        return n * self.cols * self.cell_size + (n - 1) * STACK_GAP if n else 0
-
-    def stack_cell_px(self, content_width: int) -> int:
-        """Cell size the reward stack will use after shrinking to fit ``content_width``."""
-        n = len(self.action_titles)
-        if n == 0:
-            return self.cell_size
-        return max(4, min(self.cell_size, (content_width - STACK_GAP * (n - 1)) // (n * self.cols)))
+    @property
+    def n_actions(self) -> int:
+        return len(self.env.transitions)
 
     def stack_origin(self) -> GridLayout:
-        return GridLayout(MARGIN, self.grid.origin_y + self.grid.height + MARGIN, self.cell_size, self.rows, self.cols)
+        return GridLayout(MARGIN, self.grid.origin_y + self.grid.height + MARGIN + STACK_TITLE_H, self.cell_size, self.rows, self.cols)
+
+    def stack_width(self) -> int:
+        """Unshrunk width of the reward map (n_actions columns of full-size grids)."""
+        return primitive_reward_map_geometry(self.stack_origin(), self.n_actions, STACK_GAP).width
+
+    def stack_height(self, content_width: int) -> int:
+        """Height of the reward map (2 rows) once shrunk to fit ``content_width``, plus its heading."""
+        return STACK_TITLE_H + primitive_reward_map_geometry(self.stack_origin(), self.n_actions, STACK_GAP, content_width).height
 
 
 def load_scene(toml_path: str, cell_size: int) -> Scene:
     spec, env = load_gridworld(toml_path)
     primitives = build_primitives(env, seed=spec.seed)
     reward_maps = {name: prim.reward_map() for name, prim in primitives.items()}
-    action_titles = next(iter(primitives.values())).action_labels() if primitives else []
     rows, cols = env.barrier_mask.shape
     grid = GridLayout(MARGIN, MARGIN, cell_size, rows, cols)
-    return Scene(spec, env, primitives, reward_maps, action_titles, grid, cell_size)
+    return Scene(spec, env, primitives, reward_maps, grid, cell_size)
 
 
 def draw_scene(scene: Scene, toggles: Toggles, content_width: int, draw_hover: bool = True) -> None:
@@ -161,9 +160,9 @@ def draw_scene(scene: Scene, toggles: Toggles, content_width: int, draw_hover: b
     if prim is not None and toggles.reward_map:
         stack = scene.stack_origin()
         rl.draw_text(f"reward map: {prim.target_label}", MARGIN, stack.origin_y - STACK_TITLE_H, 12, rl.DARKGRAY)
-        draw_heatmap_stack(
-            stack, scene.reward_maps[prim.target_label], REWARD_RANGE,
-            gap_px=STACK_GAP, titles=scene.action_titles, max_width=content_width, vmin=0.0, vmax=1.0,
+        draw_primitive_reward_map(
+            stack, prim, REWARD_RANGE, gap_px=STACK_GAP, max_width=content_width,
+            reward_map=scene.reward_maps[prim.target_label],
         )
 
 
@@ -226,8 +225,9 @@ def toggles_from_args(args: argparse.Namespace, scene: Scene, parser: argparse.A
 
 
 def run_window(scene: Scene, toggles: Toggles) -> None:
-    win_w = max(scene.grid.width, min(scene.stack_width(), MAX_STACK_W)) + PANEL_W + 3 * MARGIN
-    win_h = scene.grid.height + 3 * MARGIN + STACK_MIN_H
+    content_w = max(scene.grid.width, min(scene.stack_width(), MAX_STACK_W))
+    win_w = content_w + PANEL_W + 3 * MARGIN
+    win_h = scene.grid.height + 3 * MARGIN + scene.stack_height(content_w)
     win_h = max(win_h, MARGIN * 2 + ROW_H * (10 + len(scene.primitives)))
 
     rl.set_config_flags(rl.ConfigFlags.FLAG_WINDOW_RESIZABLE)
@@ -254,7 +254,7 @@ def save_screenshot(scene: Scene, toggles: Toggles, path: Path) -> Path:
     win_w = content_w + 2 * MARGIN
     win_h = scene.grid.height + 2 * MARGIN
     if show_stack:
-        win_h += MARGIN + STACK_TITLE_H + scene.stack_cell_px(content_w) * scene.rows + MARGIN
+        win_h += MARGIN + scene.stack_height(content_w) + MARGIN
 
     rl.set_config_flags(rl.ConfigFlags.FLAG_WINDOW_HIDDEN)
     rl.init_window(win_w, win_h, f"gridworld: {scene.spec.name}")

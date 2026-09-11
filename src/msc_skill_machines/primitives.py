@@ -97,10 +97,10 @@ class GridworldTaskPrimitive(gym.Env):
         """Human readable name for every primitive action, in the same order as the
         third axis of :meth:`reward_map`: ``(move0, stay), (move0, term), (move1, stay), ...``"""
         names = []
-        for delta in self.env.transitions:
-            delta_str = f"({int(delta[0])},{int(delta[1])})"
-            names.append(f"{delta_str} stay")
-            names.append(f"{delta_str} term")
+        for a, delta in enumerate(self.env.transitions):
+            prefix = f"a{a} ({int(delta[0])},{int(delta[1])})"
+            names.append(f"{prefix} no-term")
+            names.append(f"{prefix} term")
         return names
 
     def reward_map(self) -> npt.NDArray[np.float32]:

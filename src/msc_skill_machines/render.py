@@ -10,10 +10,14 @@ Cell ``(row, col)`` maps to pixels via :class:`GridLayout`, row 0 at the top.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 import numpy as np
 import numpy.typing as npt
 import pyray as rl
+
+if TYPE_CHECKING:
+    from msc_skill_machines.primitives import GridworldTaskPrimitive
 
 Colour = rl.Color
 ColourRange = tuple[Colour, Colour]
@@ -163,6 +167,106 @@ def draw_heatmap_stack(
             rl.draw_text(titles[k] if k < len(titles) else str(k), x, layout.origin_y, 10, title_colour)
         layouts.append(sub)
         x += sub.width + gap_px
+    return layouts
+
+
+# --------------------------------------------------------------------------- #
+# Primitive-specific rendering
+# --------------------------------------------------------------------------- #
+
+PRIMITIVE_TITLE_H = 14
+PRIMITIVE_ROW_TITLES = ("no-term", "term")
+
+
+@dataclass(frozen=True)
+class PrimitiveMapGeometry:
+    """Pixel geometry of a primitive reward map: ``n_actions`` columns x 2 rows of grids."""
+    cell_px: int
+    n_actions: int
+    rows: int
+    cols: int
+    gap_px: int
+
+    @property
+    def grid_w(self) -> int:
+        return self.cols * self.cell_px
+
+    @property
+    def grid_h(self) -> int:
+        return self.rows * self.cell_px
+
+    @property
+    def column_pitch(self) -> int:
+        return self.grid_w + self.gap_px
+
+    @property
+    def row_pitch(self) -> int:
+        return PRIMITIVE_TITLE_H + self.grid_h + self.gap_px
+
+    @property
+    def width(self) -> int:
+        return self.n_actions * self.column_pitch - self.gap_px
+
+    @property
+    def height(self) -> int:
+        return len(PRIMITIVE_ROW_TITLES) * self.row_pitch - self.gap_px
+
+
+def primitive_reward_map_geometry(
+    layout: GridLayout, n_actions: int, gap_px: int = 12, max_width: int | None = None,
+) -> PrimitiveMapGeometry:
+    """Size of a primitive reward map drawn from ``layout``; cells shrink to fit ``max_width``."""
+    cell_px = layout.cell_px
+    if max_width is not None and n_actions > 0:
+        cell_px = max(4, min(cell_px, (max_width - gap_px * (n_actions - 1)) // (n_actions * layout.cols)))
+    return PrimitiveMapGeometry(cell_px, n_actions, layout.rows, layout.cols, gap_px)
+
+
+def draw_primitive_reward_map(
+    layout: GridLayout,
+    primitive: GridworldTaskPrimitive,
+    colour_range: ColourRange = (rl.WHITE, rl.ORANGE),
+    gap_px: int = 12,
+    max_width: int | None = None,
+    reward_map: npt.NDArray[np.floating] | None = None,
+    title_colour: Colour = rl.DARKGRAY,
+) -> list[list[GridLayout]]:
+    """Render a primitive's reward function as a grid of heatmaps.
+
+    One column per env action, two rows: no-terminate on top, terminate below::
+
+        a0 no-term   a1 no-term   a2 no-term   a3 no-term
+        a0 term      a1 term      a2 term      a3 term
+
+    Every primitive's action is ``(env_action, terminate_action)``, and
+    :meth:`GridworldTaskPrimitive.reward_map` stores layer ``2 * a + t`` for action ``a`` and
+    terminate flag ``t``, which is what this reads. Pass ``reward_map`` to reuse a precomputed
+    tensor. All grids share the colour scale ``[0, 1]``.
+
+    Returns ``layouts[row][column]`` so callers can overlay more on any grid.
+    """
+    values = np.asarray(primitive.reward_map() if reward_map is None else reward_map, dtype=np.float64)
+    n_actions = len(primitive.env.transitions)
+    if values.shape != (layout.rows, layout.cols, 2 * n_actions):
+        raise ValueError(
+            f"reward map has shape {values.shape}, expected ({layout.rows}, {layout.cols}, {2 * n_actions})"
+        )
+    titles = primitive.action_labels()
+    geom = primitive_reward_map_geometry(layout, n_actions, gap_px, max_width)
+
+    layouts: list[list[GridLayout]] = []
+    for t, _row_name in enumerate(PRIMITIVE_ROW_TITLES):
+        row_layouts: list[GridLayout] = []
+        y = layout.origin_y + t * geom.row_pitch
+        for a in range(n_actions):
+            x = layout.origin_x + a * geom.column_pitch
+            sub = GridLayout(x, y + PRIMITIVE_TITLE_H, geom.cell_px, layout.rows, layout.cols)
+            draw_grid(sub)
+            draw_heatmap(sub, values[:, :, 2 * a + t], colour_range, vmin=0.0, vmax=1.0)
+            draw_grid_lines(sub)
+            rl.draw_text(titles[2 * a + t], x, y, 10, title_colour)
+            row_layouts.append(sub)
+        layouts.append(row_layouts)
     return layouts
 
 
