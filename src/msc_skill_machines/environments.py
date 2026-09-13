@@ -4,13 +4,15 @@ from dataclasses import dataclass
 import gymnasium as gym
 import numpy as np
 
+from msc_skill_machines.value_functions import StateValueFunction, ActionValueFunction
+
 import typing as ty
 import numpy.typing as npt
 
 logger = logging.getLogger(__name__)
 
 class GridworldEnv(gym.Env):
-    type State = npt.NDArray[np.int32]
+    type State = ty.Tuple[int, int]
     type Info = dict[str, ty.Any]
 
     # Environment Description
@@ -101,7 +103,7 @@ class GridworldEnv(gym.Env):
         logger.debug(f"gridworld-{self.short_hash}, reset: seed={seed}, start_position={self.pos}")
 
         self.step_counter = 0
-        return self.pos, {}
+        return tuple(self.pos), {}
 
     def step(self, action: int) -> ty.Tuple[ GridworldEnv.State, float, bool, bool, Info ]:
         if not self.action_space.contains(action):
@@ -120,7 +122,7 @@ class GridworldEnv(gym.Env):
 
         logger.debug(f"gridworld-{self.short_hash}, step {self.step_counter}: environment_reward={environment_reward}, is_terminated={is_terminated}, is_truncated={is_truncated}")
 
-        return self.pos, environment_reward, is_terminated, is_truncated, {
+        return tuple(self.pos), environment_reward, is_terminated, is_truncated, {
             "curr_state": curr_state,
             "next_state": next_state,
             "curr_state_labels_assignment": self.label_mask[*curr_state],
@@ -140,7 +142,7 @@ class GridworldEnv(gym.Env):
             choice_idx = self.npr.integers(len(valid_positions))
             row, col = valid_positions[choice_idx]
 
-        return np.array([row, col], dtype=np.int32)
+        return (int(row), int(col))
 
     def _next_state(self, state: GridworldEnv.State, action: int) -> GridworldEnv.State:
         candidate_state = state + self.transitions[action]
@@ -154,7 +156,7 @@ class GridworldEnv(gym.Env):
 
     def sample_goal(self) -> GridworldEnv.State:
         goal_indices = np.where(self.goal_mask)
-        return np.array([goal_indices[0][0], goal_indices[1][0]], dtype=np.int32)
+        return tuple(np.array([goal_indices[0][0], goal_indices[1][0]], dtype=np.int32))
 
     def state_is_absorbing(self, state: GridworldEnv.State) -> bool:
         return self.absorbing_mask[*state]
