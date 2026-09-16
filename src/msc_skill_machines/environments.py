@@ -154,10 +154,6 @@ class GridworldEnv(gym.Env):
     def state_is_goal(self, state: GridworldEnv.State) -> bool:
         return self.goal_mask[*state]
 
-    def sample_goal(self) -> GridworldEnv.State:
-        goal_indices = np.where(self.goal_mask)
-        return tuple(np.array([goal_indices[0][0], goal_indices[1][0]], dtype=np.int32))
-
     def state_is_absorbing(self, state: GridworldEnv.State) -> bool:
         return self.absorbing_mask[*state]
 
@@ -184,3 +180,5 @@ class GridworldEnv(gym.Env):
     def pull_cons_from_set(self, label_set: set[str]) -> set[str]: return label_set & set(self.con_labels)
     def pull_cons_from_assignment(self, label_assignment: npt.NDArray[np.bool_]) -> npt.NDArray[np.bool_]:
         return label_assignment[len(self.prop_labels):]
+    def add_props_to_cons_assignment(self, cons_assignment: npt.NDArray[np.bool_], props_assignment: npt.NDArray[np.bool_]) -> npt.NDArray[np.bool_]:
+        return np.concatenate([props_assignment, cons_assignment])

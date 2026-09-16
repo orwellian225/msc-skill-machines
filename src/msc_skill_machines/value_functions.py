@@ -36,8 +36,11 @@ class ActionValueFunction(Protocol):
         $$ Q: \\mathcal{S} \\times \\mathcal{A} \\mapsto \\mathbb{R} $$
     """
 
-    @abstractmethod
     def __call__(self, state: State, action: Action) -> float:
+        return self.evaluate(state, action)
+
+    @abstractmethod
+    def evaluate(self, state: State, action: Action) -> float:
         pass
 
     @abstractmethod
@@ -77,7 +80,7 @@ class TabularActionValueFunction(ActionValueFunction):
     def __init__(self):
         self.table = defaultdict(lambda: defaultdict(float))
 
-    def __call__(self, state: TabularState, action: TabularAction) -> float:
+    def evaluate(self, state: TabularState, action: TabularAction) -> float:
         return self.table[state][action]
 
     def update(self, state: TabularState, action: TabularAction, value: float):

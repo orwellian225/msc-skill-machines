@@ -46,6 +46,7 @@ import numpy.typing as npt
 
 from msc_skill_machines.environments import GridworldEnv
 from msc_skill_machines.primitives import GridworldTaskPrimitive
+from msc_skill_machines.tasks import GridworldTask
 
 BARRIER, ABSORBING, INITIAL, FREE = "#", "X", "S", "."
 RESERVED = {BARRIER, ABSORBING, INITIAL, FREE}
@@ -266,3 +267,6 @@ def load_gridworld(path: str | Path) -> tuple[GridworldSpec, GridworldEnv]:
 def build_primitives(env: GridworldEnv, seed: int | None = None) -> dict[str, GridworldTaskPrimitive]:
     """One :class:`GridworldTaskPrimitive` per label (propositions and ``con_*`` constraints)."""
     return {label: GridworldTaskPrimitive(env, label, seed=seed) for label in env.all_labels}
+
+def build_tasks(env: GridworldEnv, seed: int | None = None) -> dict[str, GridworldTask]:
+    return { label: GridworldTask(env , label) for label in env.all_labels }
